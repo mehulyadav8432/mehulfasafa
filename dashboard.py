@@ -66,7 +66,7 @@ def load_expert_model():
 model = load_expert_model()
 
 # ==========================================
-# 2. DATA FETCHING (With Dummy Protection)
+# 2. DATA FETCHING (RECTIFIED)
 # ==========================================
 
 def is_dummy_search(name):
@@ -74,6 +74,7 @@ def is_dummy_search(name):
     return any(d in name.lower() for d in dummies)
 
 def get_live_data(name):
+    # 1. Check for Dummy/Test Input
     if is_dummy_search(name):
         return {
             "bio": "SIMULATION MODE: No live data fetched.", "url": "#",
@@ -81,19 +82,38 @@ def get_live_data(name):
             "polarities": [], "is_live": False
         }
 
+    # 2. Fetch Wikipedia Bio (Robust)
     try:
         page = wikipedia.page(name, auto_suggest=False)
         bio = page.summary[:500] + "..."
         url = page.url
     except:
-        bio = "No Wikipedia page found."; url = "#"
+        try:
+            # Fallback: Try auto-suggest if exact match fails
+            page = wikipedia.page(name, auto_suggest=True)
+            bio = page.summary[:500] + "..."
+            url = page.url
+        except:
+            bio = "No Wikipedia page found (or connection failed)."; url = "#"
 
+    # 3. Fetch News (RECTIFIED LOGIC)
+    headlines = []
     try:
-        results = DDGS().text(f"{name} CEO controversy fraud news", max_results=15)
-        headlines = [r['title'] for r in results]
-    except:
+        with DDGS() as ddgs:
+            # Attempt 1: Strict Fraud Search
+            results = list(ddgs.text(f"{name} CEO fraud controversy", max_results=5))
+            
+            # Attempt 2: General Business News (Fallback if no scandal found)
+            if not results:
+                results = list(ddgs.text(f"{name} CEO business news", max_results=5))
+                
+            headlines = [r['title'] for r in results]
+    except Exception as e:
+        # Log error to console for debugging if needed, but return empty list to keep UI clean
+        print(f"Search Error: {e}")
         headlines = []
 
+    # 4. Calculate Sentiment
     if headlines:
         polarities = [TextBlob(h).sentiment.polarity for h in headlines]
         avg_sent = np.mean(polarities)
@@ -200,8 +220,11 @@ if btn_analyze:
             c_news, c_hist = st.columns([1, 1])
             with c_news:
                 st.subheader("Recent Headlines")
-                for h in data['headlines'][:5]:
-                    st.text(f"• {h}")
+                if data['headlines']:
+                    for h in data['headlines'][:5]:
+                        st.text(f"• {h}")
+                else:
+                    st.warning("No recent news found for this specific query.")
             with c_hist:
                 st.subheader("Sentiment Distribution")
                 if data['polarities']:
@@ -210,6 +233,8 @@ if btn_analyze:
                                             title="News Polarity (Left=Neg, Right=Pos)",
                                             color_discrete_sequence=['#636EFA'])
                     st.plotly_chart(fig_hist, use_container_width=True)
+                else:
+                    st.write("Not enough data for sentiment distribution.")
         else:
             st.warning("Live data disabled for dummy/test profiles.")
 
@@ -247,4 +272,4 @@ if btn_analyze:
 
 else:
     st.info("👈 Configure variables in the Sidebar and click 'RUN 360° ANALYSIS'")
-    st.markdown("**Test:** Enter 'Elon Musk' for live data, or 'Test User' for dummy mode.")
+    st.markdown("**Test:** Enter 'Elon Musk' or 'Satya Nadella' for live data.")
